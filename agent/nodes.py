@@ -6,35 +6,13 @@ import re
 from tools.mock_apis import get_order_status, initiate_return
 from langgraph.types import interrupt
 from agent.llm import get_llm, get_judge_llm
-from agent.schemas import IntentClassification, EvaluationResult
+from agent.schemas import EvaluationResult
 from agent.guardrails.output_checks import run_output_checks
 from cache.semantic_cache import semantic_cache
+from dspy_modules.load import get_classifier
 
 logger = get_logger(__name__)
 
-CLASSIFIER_SYSTEM_PROMPT = """You are an intent classifier for an e-commerce customer support agent.
-
-Classify the user message into exactly one of these intents:
-
-- faq: General questions about policies, products, shipping times, payment methods, account management, warranties, or any question that can be answered from a knowledge base.
-- tool: Requests that require looking up or acting on a specific order. This includes order status, tracking, returns, refunds, cancellations, or exchanges. ONLY classify as tool if the user is referring to a specific order or transaction.
-- escalation: The user is angry, frustrated, or distressed. The user explicitly asks for a human agent. The message contains legal threats, fraud claims, or account security concerns.
-- greeting: The user is greeting the agent or making small talk with no specific request.
-  Examples: "hi", "hello", "hola", "good morning", "how are you", "hey there".
-  Set awaiting_clarification to False always for greetings.
-  
-For awaiting_clarification:
-- Set True if the message lacks enough information to take a clear action.
-- Consider the full conversation history — if the missing info was provided earlier, set False.
-- Set False if the intent is fully clear and actionable as-is.
-
-For clarification_topic:
-- If awaiting_clarification is True, describe specifically what information is missing.
-- Examples: "order ID", "which item they want to return", "what problem they are experiencing"
-- Empty string if awaiting_clarification is False.
-
-Always consider the full conversation history, not just the latest message.
-"""
 
 FAQ_SYSTEM_PROMPT = """You are a helpful and friendly e-commerce customer support agent.
 
@@ -214,34 +192,24 @@ def semantic_cache_node(state: AgentState) -> dict:
 def intent_classifier_node(state: AgentState) -> dict:
     logger.info("Running intent classifier node")
 
-    llm = get_llm()
-    classifier_llm = llm.with_structured_output(IntentClassification)
+    classifier = get_classifier()
 
-    # Build full conversation context
+    # Build conversation context
     history = "\n".join(
         [f"{msg.__class__.__name__}: {msg.content}" for msg in state["messages"]]
     )
 
-    prompt = f"""Conversation history:
-{history}
-
-Classify the intent of the latest user message."""
+    last_message = state["messages"][-1].content
 
     try:
-        result: IntentClassification = classifier_llm.invoke(
-            [
-                {"role": "system", "content": CLASSIFIER_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ]
-        )  # type: ignore
+        result = classifier(message=last_message, history=history)
 
         logger.info(
-            "Intent classified  intent: %s  confidence: %.2f  awaiting_clarification: %s  topic: %s  reasoning: %s",
+            "Intent classified  intent: %s  confidence: %.2f  awaiting_clarification: %s  topic: %s",
             result.intent,
             result.confidence,
             result.awaiting_clarification,
             result.clarification_topic,
-            result.reasoning,
         )
 
         return {

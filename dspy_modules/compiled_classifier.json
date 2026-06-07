@@ -1,0 +1,79 @@
+{
+  "classify": {
+    "traces": [],
+    "train": [],
+    "demos": [
+      {
+        "augmented": true,
+        "message": "What is your return policy?",
+        "history": "",
+        "intent": "faq",
+        "confidence": 1.0,
+        "awaiting_clarification": false,
+        "clarification_topic": ""
+      },
+      {
+        "augmented": true,
+        "message": "How long does shipping take?",
+        "history": "",
+        "intent": "faq",
+        "confidence": 0.9,
+        "awaiting_clarification": false,
+        "clarification_topic": ""
+      },
+      {
+        "message": "Do products come with a warranty?",
+        "history": "",
+        "intent": "faq",
+        "confidence": 1.0,
+        "awaiting_clarification": false,
+        "clarification_topic": ""
+      },
+      {
+        "message": "I want to return order ORD003",
+        "history": "",
+        "intent": "tool",
+        "confidence": 1.0,
+        "awaiting_clarification": false,
+        "clarification_topic": ""
+      }
+    ],
+    "signature": {
+      "instructions": "Classify the intent of a customer support message for an e-commerce store.\n\nIntents:\n- faq: General questions about policies, products, shipping, payments, account\n- tool: Requests needing order lookup — status, tracking, returns, refunds\n- escalation: Angry users, explicit human requests, fraud, legal threats\n- greeting: Greetings, small talk, capability questions\n- clarification: Message is too vague to classify confidently",
+      "fields": [
+        {
+          "prefix": "Message:",
+          "description": "The customer message to classify"
+        },
+        {
+          "prefix": "History:",
+          "description": "Prior conversation turns for context"
+        },
+        {
+          "prefix": "Intent:",
+          "description": "The classified intent"
+        },
+        {
+          "prefix": "Confidence:",
+          "description": "Confidence score between 0.0 and 1.0"
+        },
+        {
+          "prefix": "Awaiting Clarification:",
+          "description": "True if more information is needed to act on this message"
+        },
+        {
+          "prefix": "Clarification Topic:",
+          "description": "What specific information is missing. Empty string if not needed."
+        }
+      ]
+    },
+    "lm": null
+  },
+  "metadata": {
+    "dependency_versions": {
+      "python": "3.12",
+      "dspy": "3.1.0",
+      "cloudpickle": "3.1"
+    }
+  }
+}
