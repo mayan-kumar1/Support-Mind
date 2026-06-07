@@ -8,6 +8,7 @@ from langgraph.types import interrupt
 from agent.llm import get_llm, get_judge_llm
 from agent.schemas import IntentClassification, EvaluationResult
 from agent.guardrails.output_checks import run_output_checks
+from cache.semantic_cache import semantic_cache
 
 logger = get_logger(__name__)
 
@@ -191,8 +192,23 @@ def input_guardrails_node(state: AgentState) -> dict:
 
 def semantic_cache_node(state: AgentState) -> dict:
     logger.info("Running semantic_cache_node")
-    # Week 4: check if query matches a cached answer
-    return {}
+
+    # Only cache FAQ intent queries — skip for tool, escalation, greeting
+    # At this point intent hasn't been classified yet so we check the raw message
+    last_message = state["messages"][-1].content
+
+    cached_response = semantic_cache.get(last_message)
+
+    if cached_response:
+        logger.info("Serving response from semantic cache")
+        return {
+            "final_response": cached_response,
+            "cache_hit": True,
+            "confidence": 1.0,
+            "intent": "faq",  # cached responses are always FAQ
+        }
+
+    return {"cache_hit": False}
 
 
 def intent_classifier_node(state: AgentState) -> dict:
@@ -290,7 +306,9 @@ Answer the customer's question using only the context above."""
             top_score,
             len(final_response),
         )
-
+        if top_score >= 0.6:
+            semantic_cache.set(last_message, final_response)  # type: ignore
+            logger.info("Response stored in semantic cache")
         # If top retrieval score is low, flag low confidence
         confidence = top_score if top_score >= 0.5 else top_score * 0.5
 

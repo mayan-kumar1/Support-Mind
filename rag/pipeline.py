@@ -7,6 +7,17 @@ logger = get_logger(__name__)
 
 MODEL_NAME = "all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384
+# rag/pipeline.py
+_embedding_model = None
+
+
+def get_embedding_model() -> SentenceTransformer:
+    global _embedding_model
+    if _embedding_model is None:
+        logger.info("Loading embedding model: %s", MODEL_NAME)
+        _embedding_model = SentenceTransformer(MODEL_NAME)
+        logger.info("Embedding model loaded")
+    return _embedding_model
 
 
 def get_pinecone_index():
@@ -21,13 +32,13 @@ def get_pinecone_index():
     return index
 
 
-def get_embedding_model():
-    logger.info("Loading embedding model: %s", MODEL_NAME)
+# def get_embedding_model():
+#     logger.info("Loading embedding model: %s", MODEL_NAME)
 
-    model = SentenceTransformer(MODEL_NAME)
-    logger.info("Embedding model loaded")
+#     model = SentenceTransformer(MODEL_NAME)
+#     logger.info("Embedding model loaded")
 
-    return model
+#     return model
 
 
 def ingest_faq(faq_data: list):

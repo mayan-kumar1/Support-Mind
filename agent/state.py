@@ -19,3 +19,4 @@ class AgentState(TypedDict):
     guardrail_reason: str
     clarification_topic: str
     escalated: bool
+    cache_hit: bool

@@ -66,6 +66,13 @@ def route_after_evaluation(state: AgentState) -> str:
     return "hitl"  # always passes through hitl — interrupt logic is inside
 
 
+def route_after_cache(state: AgentState) -> str:
+    if state.get("cache_hit", False):
+        logger.info("Cache hit — skipping to output guardrails")
+        return "output_guardrails"
+    return "intent_classifier"
+
+
 def build_graph():
     graph_builder = StateGraph(AgentState)
 
@@ -93,8 +100,15 @@ def build_graph():
             "continue": "semantic_cache",
         },
     )
-    graph_builder.add_edge("semantic_cache", "intent_classifier")
-
+    # graph_builder.add_edge("semantic_cache", "intent_classifier")
+    graph_builder.add_conditional_edges(
+        "semantic_cache",
+        route_after_cache,
+        {
+            "output_guardrails": "output_guardrails",
+            "intent_classifier": "intent_classifier",
+        },
+    )
     # Clarification check after classification
     graph_builder.add_conditional_edges(
         "intent_classifier",
