@@ -35,6 +35,3 @@ def run(user_input: str, user_id="default_user"):
 if __name__ == "__main__":
 
     run("What is your return policy?", user_id="user_001")
-    run("Where is my Samsung TV order?", user_id="user_002")
-    run("What is the status of order ORD002?", user_id="user_003")
-    run("I want to speak to a human right now", user_id="user_004")

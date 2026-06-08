@@ -14,13 +14,30 @@ from agent.nodes import (
     output_guardrails_node,
 )
 from logger import get_logger
+from langgraph.checkpoint.sqlite import SqliteSaver
+import os
+import sqlite3
 from langgraph.checkpoint.memory import MemorySaver
 
 logger = get_logger(__name__)
 
 MAX_CLARIFICATIONS = 2
 
-checkpointer = MemorySaver()
+
+def get_checkpointer():
+    env = os.getenv("ENVIRONMENT", "development")
+
+    if env == "production":
+        db_path = os.getenv("CHECKPOINT_DB_PATH", "memory/checkpoints.db")
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        checkpointer = SqliteSaver(conn)
+        logger.info("Using SqliteSaver  path: %s", db_path)
+    else:
+        checkpointer = MemorySaver()
+        logger.info("Using MemorySaver  env: development")
+
+    return checkpointer
 
 
 def route_after_input_guardrails(state: AgentState) -> str:
@@ -155,7 +172,8 @@ def build_graph():
     graph_builder.add_edge("hitl", "output_guardrails")
     graph_builder.add_edge("output_guardrails", END)
 
-    graph = graph_builder.compile(checkpointer=checkpointer)
+    checkpointer = get_checkpointer()
+    graph = graph_builder.compile(checkpointer=checkpointer)  # type: ignore
     logger.info("Graph compiled")
 
     png_data = graph.get_graph().draw_mermaid_png()
