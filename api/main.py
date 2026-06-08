@@ -23,7 +23,6 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS — allow Streamlit Cloud to call this API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -52,20 +51,20 @@ class ChatResponse(BaseModel):
     guardrail_failed: bool = False
     escalated: bool = False
     interrupted: bool = False
-    interrupt_type: str = ""  # "clarification" or "hitl"
+    interrupt_type: str = ""
     interrupt_value: str | dict = ""
     hitl_package: dict = {}
 
 
 # ── Health check ───────────────────────────────────────────────────────────────
 @app.get("/health")
-def health():
+async def health():
     return {"status": "ok", "service": "SupportMind API"}
 
 
 # ── Chat endpoint ──────────────────────────────────────────────────────────────
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest):
+async def chat(request: ChatRequest):
     logger.info(
         "Chat request  user_id: %s  message: %s", request.user_id, request.message
     )
@@ -93,39 +92,36 @@ def chat(request: ChatRequest):
     }
 
     try:
-        result = agent_graph.invoke(initial_state, config=config)
-        return _build_response(result, config)
+        result = await agent_graph.ainvoke(initial_state, config=config)  # type: ignore
+        return await _build_response(result, config)
 
     except Exception as e:
         logger.error("Chat endpoint error  error: %s", str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Resume endpoint — for clarification and HITL ───────────────────────────────
+# ── Resume endpoint ────────────────────────────────────────────────────────────
 @app.post("/resume", response_model=ChatResponse)
-def resume(request: ResumeRequest):
+async def resume(request: ResumeRequest):
     logger.info("Resume request  user_id: %s", request.user_id)
 
     config = {"configurable": {"thread_id": request.user_id}}
 
     try:
-        # Clarification resume — string value
         if isinstance(request.resume_value, str):
-            result = agent_graph.invoke(
+            result = await agent_graph.ainvoke(
                 Command(
                     resume=request.resume_value,
                     update={"messages": [HumanMessage(content=request.resume_value)]},
                 ),
-                config=config,
+                config=config,  # type: ignore
             )
-
-        # HITL resume — dict with action
         else:
-            result = agent_graph.invoke(
-                Command(resume=request.resume_value), config=config
+            result = await agent_graph.ainvoke(
+                Command(resume=request.resume_value), config=config  # type: ignore
             )
 
-        return _build_response(result, config)
+        return await _build_response(result, config)
 
     except Exception as e:
         logger.error("Resume endpoint error  error: %s", str(e))
@@ -133,12 +129,9 @@ def resume(request: ResumeRequest):
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
-def _build_response(result: dict, config: dict) -> ChatResponse:
-    """Build a ChatResponse checking for interrupts in graph state."""
+async def _build_response(result: dict, config: dict) -> ChatResponse:
+    graph_state = await agent_graph.aget_state(config)  # type: ignore
 
-    graph_state = agent_graph.get_state(config) # type: ignore
-
-    # Check for interrupts
     if graph_state.next and graph_state.tasks:
         tasks = graph_state.tasks
         interrupts = tasks[0].interrupts if tasks else []
@@ -146,11 +139,8 @@ def _build_response(result: dict, config: dict) -> ChatResponse:
         if interrupts:
             interrupt_value = interrupts[0].value
 
-            # Clarification interrupt — string
             if isinstance(interrupt_value, str):
-                logger.info(
-                    "Clarification interrupt detected  question: %s", interrupt_value
-                )
+                logger.info("Clarification interrupt  question: %s", interrupt_value)
                 return ChatResponse(
                     response=interrupt_value,
                     interrupted=True,
@@ -158,7 +148,6 @@ def _build_response(result: dict, config: dict) -> ChatResponse:
                     interrupt_value=interrupt_value,
                 )
 
-            # HITL interrupt — dict
             elif isinstance(interrupt_value, dict):
                 logger.info("HITL interrupt detected")
                 return ChatResponse(
@@ -180,7 +169,6 @@ def _build_response(result: dict, config: dict) -> ChatResponse:
                     ),
                 )
 
-    # No interrupt — normal response
     escalated = graph_state.values.get("escalated", False)
 
     return ChatResponse(

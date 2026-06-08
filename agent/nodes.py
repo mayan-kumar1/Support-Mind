@@ -42,6 +42,7 @@ Rules:
 - Never say "based on the data" or "according to our system"
 - Speak as if you know this information directly
 """
+
 ORDER_ID_PATTERN = re.compile(r"\b(ORD[-]?\d+|TRK\d+)\b", re.IGNORECASE)
 
 CLARIFICATION_SYSTEM_PROMPT = """You are a helpful and friendly e-commerce customer support agent.
@@ -52,7 +53,7 @@ Your job is to ask for the missing information in a natural, friendly, and conci
 - Keep it to one sentence
 - Be specific about what you need
 - Do not repeat what the user said back to them
-- Do not apologise excessively  
+- Do not apologise excessively
 - Sound human, not robotic
 - Never mention order IDs, databases, or systems directly
 
@@ -61,7 +62,6 @@ For awaiting_clarification:
 - Order IDs can appear in any format: ORD001, ORD-001, tracking numbers like TRK998877.
 - If ANY order reference appears anywhere in the history, set awaiting_clarification to False.
 - Only set True if the history has been checked and no reference exists.
-
 """
 
 GREETING_SYSTEM_PROMPT = """You are a friendly e-commerce customer support agent called SupportMind.
@@ -105,7 +105,7 @@ Key things to check:
 - For escalations — is the handoff empathetic and reassuring?
 - For greetings — is the response warm and natural?
 
-Be strict but fair. A response that is technically correct but robotic or unhelpful 
+Be strict but fair. A response that is technically correct but robotic or unhelpful
 should score no higher than 0.6.
 """
 
@@ -128,8 +128,6 @@ HITL_ESCALATION_RESPONSE = "I'm connecting you with one of our human agents who 
 
 
 def extract_order_id_from_history(messages: list) -> str | None:
-    """Scan full message history for an order ID. Returns most recent match."""
-    # Scan in reverse — most recent message first
     for msg in reversed(messages):
         match = ORDER_ID_PATTERN.search(msg.content)
         if match:
@@ -138,7 +136,6 @@ def extract_order_id_from_history(messages: list) -> str | None:
 
 
 def determine_tool_action(messages: list) -> str:
-    """Determine whether to check status or initiate return based on message history."""
     full_history = " ".join([msg.content.lower() for msg in messages])
     return_keywords = ["return", "refund", "send back", "give back", "exchange"]
     for keyword in return_keywords:
@@ -147,12 +144,13 @@ def determine_tool_action(messages: list) -> str:
     return "status"
 
 
-def input_guardrails_node(state: AgentState) -> dict:
-    logger.info("Running input guardrails node")
+# ── Nodes ──────────────────────────────────────────────────────────────────────
 
+
+async def input_guardrails_node(state: AgentState) -> dict:
+    logger.info("Running input guardrails node")
     last_message = state["messages"][-1].content
     failed, reason = run_input_checks(last_message)
-
     if failed:
         logger.warning("Input guardrail failed  reason: %s", reason)
         return {
@@ -160,7 +158,6 @@ def input_guardrails_node(state: AgentState) -> dict:
             "guardrail_reason": reason,
             "final_response": reason,
         }
-
     logger.info("Input guardrails passed")
     return {
         "guardrail_failed": False,
@@ -168,42 +165,30 @@ def input_guardrails_node(state: AgentState) -> dict:
     }
 
 
-def semantic_cache_node(state: AgentState) -> dict:
+async def semantic_cache_node(state: AgentState) -> dict:
     logger.info("Running semantic_cache_node")
-
-    # Only cache FAQ intent queries — skip for tool, escalation, greeting
-    # At this point intent hasn't been classified yet so we check the raw message
     last_message = state["messages"][-1].content
-
     cached_response = semantic_cache.get(last_message)
-
     if cached_response:
         logger.info("Serving response from semantic cache")
         return {
             "final_response": cached_response,
             "cache_hit": True,
             "confidence": 1.0,
-            "intent": "faq",  # cached responses are always FAQ
+            "intent": "faq",
         }
-
     return {"cache_hit": False}
 
 
-def intent_classifier_node(state: AgentState) -> dict:
+async def intent_classifier_node(state: AgentState) -> dict:
     logger.info("Running intent classifier node")
-
     classifier = get_classifier()
-
-    # Build conversation context
     history = "\n".join(
         [f"{msg.__class__.__name__}: {msg.content}" for msg in state["messages"]]
     )
-
     last_message = state["messages"][-1].content
-
     try:
         result = classifier(message=last_message, history=history)
-
         logger.info(
             "Intent classified  intent: %s  confidence: %.2f  awaiting_clarification: %s  topic: %s",
             result.intent,
@@ -211,14 +196,12 @@ def intent_classifier_node(state: AgentState) -> dict:
             result.awaiting_clarification,
             result.clarification_topic,
         )
-
         return {
             "intent": result.intent,
             "confidence": result.confidence,
             "awaiting_clarification": result.awaiting_clarification,
             "clarification_topic": result.clarification_topic,
         }
-
     except Exception as e:
         logger.error("Intent classification failed  error: %s", str(e))
         return {
@@ -229,13 +212,54 @@ def intent_classifier_node(state: AgentState) -> dict:
         }
 
 
-def faq_rag_node(state: AgentState) -> dict:
+async def clarification_node(state: AgentState) -> dict:
+    count = state.get("clarification_count", 0) + 1
+    logger.info("Running clarification node  round: %d", count)
+
+    llm = get_llm()
+    last_message = state["messages"][-1].content
+    topic = state.get("clarification_topic", "the information needed")
+
+    prompt = f"""The user said: "{last_message}"
+
+What is missing: {topic}
+
+Ask the user for this specific missing information naturally and concisely in one sentence."""
+
+    try:
+        response = await llm.ainvoke(
+            [
+                {"role": "system", "content": CLARIFICATION_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
+        )
+        clarification_question = response.content
+    except Exception as e:
+        logger.error("Clarification LLM failed  error: %s", str(e))
+        clarification_question = (
+            "Could you please provide more details so I can help you?"
+        )
+
+    logger.info(
+        "Clarification question generated  round: %d  question: %s",
+        count,
+        clarification_question,
+    )
+
+    interrupt(clarification_question)
+
+    return {
+        "clarification_count": count,
+        "awaiting_clarification": False,
+        "final_response": clarification_question,
+    }
+
+
+async def faq_rag_node(state: AgentState) -> dict:
     logger.info("Running faq_rag node")
 
     llm = get_llm()
     last_message = state["messages"][-1].content
-
-    # Retrieve relevant docs from Pinecone
     docs = retrieve(last_message, top_k=3)
 
     if not docs:
@@ -247,9 +271,7 @@ def faq_rag_node(state: AgentState) -> dict:
             "requires_human": True,
         }
 
-    # Build context from retrieved docs
     context = "\n\n".join([f"Q: {doc['question']}\nA: {doc['answer']}" for doc in docs])
-
     top_score = docs[0]["score"]
     logger.info("Top retrieval score: %.4f", top_score)
 
@@ -261,13 +283,12 @@ Customer question: {last_message}
 Answer the customer's question using only the context above."""
 
     try:
-        response = llm.invoke(
+        response = await llm.ainvoke(
             [
                 {"role": "system", "content": FAQ_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ]
         )
-
         final_response = response.content
         logger.info(
             "FAQ response generated  top_score: %.4f  response_length: %d",
@@ -277,16 +298,14 @@ Answer the customer's question using only the context above."""
         if top_score >= 0.6:
             semantic_cache.set(last_message, final_response)  # type: ignore
             logger.info("Response stored in semantic cache")
-        # If top retrieval score is low, flag low confidence
-        confidence = top_score if top_score >= 0.5 else top_score * 0.5
 
+        confidence = top_score if top_score >= 0.5 else top_score * 0.5
         return {
             "retrieved_docs": docs,
             "confidence": confidence,
             "final_response": final_response,
             "requires_human": confidence < 0.35,
         }
-
     except Exception as e:
         logger.error("FAQ RAG node failed  error: %s", str(e))
         return {
@@ -297,28 +316,23 @@ Answer the customer's question using only the context above."""
         }
 
 
-def greeting_node(state: AgentState) -> dict:
+async def greeting_node(state: AgentState) -> dict:
     logger.info("Running greeting node")
-
     llm = get_llm()
     last_message = state["messages"][-1].content
-
     try:
-        response = llm.invoke(
+        response = await llm.ainvoke(
             [
                 {"role": "system", "content": GREETING_SYSTEM_PROMPT},
                 {"role": "user", "content": last_message},
             ]
         )
-
         logger.info("Greeting response generated")
-
         return {
             "confidence": 1.0,
             "requires_human": False,
             "final_response": response.content,
         }
-
     except Exception as e:
         logger.error("Greeting node failed  error: %s", str(e))
         return {
@@ -328,19 +342,14 @@ def greeting_node(state: AgentState) -> dict:
         }
 
 
-def tool_use_node(state: AgentState) -> dict:
+async def tool_use_node(state: AgentState) -> dict:
     logger.info("Running tool_use node")
-
     llm = get_llm()
     messages = state["messages"]
-
-    # Edge case — extract order ID defensively even though classifier should have caught this
     order_id = extract_order_id_from_history(messages)
 
     if not order_id:
-        logger.warning(
-            "Tool use node reached without order ID — should have been caught by classifier"
-        )
+        logger.warning("Tool use node reached without order ID")
         return {
             "tool_result": {"success": False, "error": "No order ID found"},
             "confidence": 0.2,
@@ -350,19 +359,14 @@ def tool_use_node(state: AgentState) -> dict:
             "final_response": "I need your order ID to look that up. You can find it in your confirmation email.",
         }
 
-    # Determine which tool to call
     action = determine_tool_action(messages)
     logger.info("Tool action determined  order_id: %s  action: %s", order_id, action)
 
-    # Call the appropriate mock API
-    if action == "return":
-        result = initiate_return(order_id)
-    else:
-        result = get_order_status(order_id)
-
+    result = (
+        initiate_return(order_id) if action == "return" else get_order_status(order_id)
+    )
     logger.info("Tool result  success: %s", result.get("success"))
 
-    # Use LLM to format a natural response from raw API result
     prompt = f"""Order ID: {order_id}
 Action taken: {"Return initiated" if action == "return" else "Order status checked"}
 Result: {result}
@@ -370,22 +374,19 @@ Result: {result}
 Present this information to the customer naturally."""
 
     try:
-        response = llm.invoke(
+        response = await llm.ainvoke(
             [
                 {"role": "system", "content": TOOL_RESPONSE_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ]
         )
-
         confidence = 0.95 if result.get("success") else 0.4
-
         return {
             "tool_result": result,
             "confidence": confidence,
             "requires_human": not result.get("success"),
             "final_response": response.content,
         }
-
     except Exception as e:
         logger.error("Tool use node LLM formatting failed  error: %s", str(e))
         return {
@@ -396,15 +397,12 @@ Present this information to the customer naturally."""
         }
 
 
-def escalation_node(state: AgentState) -> dict:
+async def escalation_node(state: AgentState) -> dict:
     logger.info("Running escalation node")
-
     llm = get_llm()
-
     history = "\n".join(
         [f"{msg.__class__.__name__}: {msg.content}" for msg in state["messages"]]
     )
-
     prompt = f"""Conversation history:
 {history}
 
@@ -412,22 +410,19 @@ The customer needs to speak with a human agent.
 Acknowledge their concern and let them know a human will assist them shortly."""
 
     try:
-        response = llm.invoke(
+        response = await llm.ainvoke(
             [
                 {"role": "system", "content": ESCALATION_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ]
         )
-
         logger.info("Escalation response generated")
-
         return {
             "requires_human": True,
             "confidence": 1.0,
             "escalated": True,
             "final_response": response.content,
         }
-
     except Exception as e:
         logger.error("Escalation node failed  error: %s", str(e))
         return {
@@ -438,7 +433,61 @@ Acknowledge their concern and let them know a human will assist them shortly."""
         }
 
 
-def hitl_node(state: AgentState) -> dict:
+async def evaluator_node(state: AgentState) -> dict:
+    logger.info("Evaluating response quality")
+    judge = get_judge_llm()
+    evaluator = judge.with_structured_output(EvaluationResult)
+
+    last_message = state["messages"][-1].content
+    final_response = state.get("final_response", "")
+    intent = state.get("intent", "unknown")
+
+    if not final_response:
+        logger.warning("No final response to evaluate")
+        return {
+            "evaluation_score": 0.0,
+            "evaluation_feedback": "No response was generated.",
+            "confidence": 0.0,
+        }
+
+    prompt = f"""Intent classified: {intent}
+
+Customer message: {last_message}
+
+Agent response: {final_response}
+
+Evaluate the quality of the agent response."""
+
+    try:
+        result: EvaluationResult = await evaluator.ainvoke(
+            [
+                {"role": "system", "content": EVALUATOR_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
+        )  # type: ignore
+        logger.info(
+            "Evaluation complete  score: %.2f  passes: %s  feedback: %s",
+            result.score,
+            result.passes,
+            result.feedback,
+        )
+        current_confidence = state.get("confidence", 1.0)
+        final_confidence = min(current_confidence, result.score)
+        return {
+            "evaluation_score": result.score,
+            "evaluation_feedback": result.feedback,
+            "confidence": final_confidence,
+        }
+    except Exception as e:
+        logger.error("Evaluator node failed  error: %s", str(e))
+        return {
+            "evaluation_score": 0.8,
+            "evaluation_feedback": "Evaluation failed — defaulting to pass.",
+            "confidence": state.get("confidence", 0.8),
+        }
+
+
+async def hitl_node(state: AgentState) -> dict:
     logger.info("Running HITL check node")
 
     confidence = state.get("confidence", 1.0)
@@ -480,10 +529,8 @@ def hitl_node(state: AgentState) -> dict:
     )
 
     human_decision = interrupt(review_package)
-
     action = human_decision.get("action", "approve")
     edited_response = human_decision.get("edited_response", "")
-
     logger.info("Human decision received  action: %s", action)
 
     if action == "escalate":
@@ -507,9 +554,8 @@ def hitl_node(state: AgentState) -> dict:
         }
 
 
-def output_guardrails_node(state: AgentState) -> dict:
+async def output_guardrails_node(state: AgentState) -> dict:
     logger.info("Running output guardrails node")
-
     last_message = state["messages"][-1].content
     final_response = state.get("final_response", "")
 
@@ -525,113 +571,4 @@ def output_guardrails_node(state: AgentState) -> dict:
         logger.warning("Output guardrails modified the response")
 
     logger.info("Output guardrails complete  response_length: %d", len(safe_response))
-
     return {"final_response": safe_response}
-
-
-def clarification_node(state: AgentState) -> dict:
-    count = state.get("clarification_count", 0) + 1
-    logger.info("Running clarification node  round: %d", count)
-
-    llm = get_llm()
-    last_message = state["messages"][-1].content
-    topic = state.get("clarification_topic", "the information needed")
-
-    prompt = f"""The user said: "{last_message}"
-
-What is missing: {topic}
-
-Ask the user for this specific missing information naturally and concisely in one sentence."""
-
-    try:
-        response = llm.invoke(
-            [
-                {"role": "system", "content": CLARIFICATION_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ]
-        )
-        clarification_question = response.content
-
-    except Exception as e:
-        logger.error("Clarification LLM failed  error: %s", str(e))
-        clarification_question = (
-            "Could you please provide more details so I can help you?"
-        )
-
-    logger.info(
-        "Clarification question generated  round: %d  question: %s",
-        count,
-        clarification_question,
-    )
-
-    # Interrupt the graph here — pause and surface question to user
-    # Graph will resume when user sends their next message
-    interrupt(clarification_question)
-
-    return {
-        "clarification_count": count,
-        "awaiting_clarification": False,
-        "final_response": clarification_question,
-    }
-
-
-def evaluator_node(state: AgentState) -> dict:
-    logger.info("Evaluating response quality")
-
-    judge = get_judge_llm()
-    evaluator = judge.with_structured_output(EvaluationResult)
-
-    last_message = state["messages"][-1].content
-    final_response = state.get("final_response", "")
-    intent = state.get("intent", "unknown")
-
-    if not final_response:
-        logger.warning("No final response to evaluate")
-        return {
-            "evaluation_score": 0.0,
-            "evaluation_feedback": "No response was generated.",
-            "confidence": 0.0,
-        }
-
-    prompt = f"""Intent classified: {intent}
-
-Customer message: {last_message}
-
-Agent response: {final_response}
-
-Evaluate the quality of the agent response."""
-
-    try:
-        result: EvaluationResult = evaluator.invoke(
-            [
-                {"role": "system", "content": EVALUATOR_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ]
-        )  # type: ignore
-
-        logger.info(
-            "Evaluation complete  score: %.2f  passes: %s  feedback: %s",
-            result.score,
-            result.passes,
-            result.feedback,
-        )
-
-        # Update confidence based on evaluation score
-        # Takes the lower of retrieval confidence and evaluation score
-        current_confidence = state.get("confidence", 1.0)
-        final_confidence = min(current_confidence, result.score)
-
-        return {
-            "evaluation_score": result.score,
-            "evaluation_feedback": result.feedback,
-            "confidence": final_confidence,
-        }
-
-    except Exception as e:
-        logger.error("Evaluator node failed  error: %s", str(e))
-        # Fail open — don't block the response if evaluator crashes
-        return {
-            "evaluation_score": 0.8,
-            "evaluation_feedback": "Evaluation failed — defaulting to pass.",
-            "confidence": state.get("confidence", 0.8),
-        }
