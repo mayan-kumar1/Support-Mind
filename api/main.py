@@ -12,28 +12,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
-from agent.graph import agent_graph
 from logger import get_logger
 from contextlib import asynccontextmanager
 
 logger = get_logger(__name__)
 
+_agent_graph = None
+
+
+def get_agent_graph():
+    global _agent_graph
+    if _agent_graph is None:
+        from agent.graph import agent_graph
+
+        _agent_graph = agent_graph
+    return _agent_graph
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup — runs after port is bound
-    logger.info("Warming up models...")
-    from rag.pipeline import get_embedding_model
-    from agent.llm import get_llm, get_judge_llm
-    from dspy_modules.load import get_classifier
-
-    get_embedding_model()
-    get_llm()
-    get_judge_llm()
-    get_classifier()
-    logger.info("All models warmed up")
+    logger.info("Port bound — loading models...")
+    get_agent_graph()  # triggers full graph + model loading
+    logger.info("All models loaded — service ready")
     yield
-    # Shutdown
     logger.info("Shutting down")
 
 
@@ -130,7 +131,7 @@ async def resume(request: ResumeRequest):
 
     try:
         if isinstance(request.resume_value, str):
-            result = await agent_graph.ainvoke(
+            result = await get_agent_graph.ainvoke(
                 Command(
                     resume=request.resume_value,
                     update={"messages": [HumanMessage(content=request.resume_value)]},
@@ -138,7 +139,7 @@ async def resume(request: ResumeRequest):
                 config=config,  # type: ignore
             )
         else:
-            result = await agent_graph.ainvoke(
+            result = await get_agent_graph.ainvoke(
                 Command(resume=request.resume_value), config=config  # type: ignore
             )
 
@@ -151,7 +152,7 @@ async def resume(request: ResumeRequest):
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
 async def _build_response(result: dict, config: dict) -> ChatResponse:
-    graph_state = await agent_graph.aget_state(config)  # type: ignore
+    graph_state = await get_agent_graph.aget_state(config)  # type: ignore
 
     if graph_state.next and graph_state.tasks:
         tasks = graph_state.tasks

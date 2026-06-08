@@ -10,5 +10,5 @@ wheels/
 .venv
 /logs
 /.env
-/ui/app.py
 /run_ui.py
+/.streamlit/secrets.toml
