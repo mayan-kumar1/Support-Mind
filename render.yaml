@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: supportmind-api
+    runtime: python
+    buildCommand: pip install uv && uv sync
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: GROQ_API_KEY
+        sync: false
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: PINECONE_INDEX_NAME
+        value: supportmind
+      - key: LANGCHAIN_TRACING_V2
+        value: "true"
+      - key: LANGCHAIN_ENDPOINT
+        value: https://api.smith.langchain.com
+      - key: LANGCHAIN_API_KEY
+        sync: false
+      - key: LANGCHAIN_PROJECT
+        value: supportmind
+      - key: CHECKPOINT_DB_PATH
+        value: memory/checkpoints.db
