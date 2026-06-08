@@ -14,13 +14,34 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from agent.graph import agent_graph
 from logger import get_logger
+from contextlib import asynccontextmanager
 
 logger = get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup — runs after port is bound
+    logger.info("Warming up models...")
+    from rag.pipeline import get_embedding_model
+    from agent.llm import get_llm, get_judge_llm
+    from dspy_modules.load import get_classifier
+
+    get_embedding_model()
+    get_llm()
+    get_judge_llm()
+    get_classifier()
+    logger.info("All models warmed up")
+    yield
+    # Shutdown
+    logger.info("Shutting down")
+
 
 app = FastAPI(
     title="SupportMind API",
     description="AI Customer Support Agent API",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
