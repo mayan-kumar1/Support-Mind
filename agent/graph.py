@@ -28,11 +28,12 @@ def get_checkpointer():
     env = os.getenv("ENVIRONMENT", "development")
 
     if env == "production":
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
         db_path = os.getenv("CHECKPOINT_DB_PATH", "memory/checkpoints.db")
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        conn = sqlite3.connect(db_path, check_same_thread=False)
-        checkpointer = SqliteSaver(conn)
-        logger.info("Using SqliteSaver  path: %s", db_path)
+        checkpointer = AsyncSqliteSaver.from_conn_string(db_path)
+        logger.info("Using AsyncSqliteSaver  path: %s", db_path)
     else:
         checkpointer = MemorySaver()
         logger.info("Using MemorySaver  env: development")
