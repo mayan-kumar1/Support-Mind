@@ -1,23 +1,38 @@
-from llm_guard.output_scanners import Deanonymize, NoRefusal, LanguageSame
-from llm_guard.output_scanners.relevance import Relevance
-from llm_guard.vault import Vault
+import os
 from logger import get_logger
 
 logger = get_logger(__name__)
 
-vault = Vault()
-deanonymize_scanner = Deanonymize(vault)
-no_refusal_scanner = NoRefusal()
-relevance_scanner = Relevance()
+USE_LLM_GUARD = os.getenv("USE_LLM_GUARD", "true").lower() == "true"
+
+if USE_LLM_GUARD:
+    from llm_guard.output_scanners import NoRefusal
+    from llm_guard.output_scanners.relevance import Relevance
+    from llm_guard.vault import Vault
+
+    vault = Vault()
+    relevance_scanner = Relevance()
+    no_refusal_scanner = NoRefusal()
+    logger.info("llm-guard output scanners enabled")
+else:
+    relevance_scanner = None
+    no_refusal_scanner = None
+    logger.warning("llm-guard output scanners disabled")
 
 
 def check_pii_in_output(prompt: str, response: str) -> tuple[bool, str]:
-    """Check if response contains PII that should be redacted."""
+    if not USE_LLM_GUARD:
+        logger.debug("Output PII scanner disabled — skipping")
+        return False, response
     try:
+        from llm_guard.output_scanners import Deanonymize
+        from llm_guard.vault import Vault
+
+        deanonymize_scanner = Deanonymize(Vault())
         sanitized, is_valid, risk_score = deanonymize_scanner.scan(prompt, response)
         if not is_valid:
             logger.warning("PII detected in output  risk_score: %.2f", risk_score)
-            return True, sanitized  # sanitized has PII replaced
+            return True, sanitized
         return False, response
     except Exception as e:
         logger.error("PII output check failed  error: %s", str(e))
@@ -25,16 +40,16 @@ def check_pii_in_output(prompt: str, response: str) -> tuple[bool, str]:
 
 
 def check_relevance(prompt: str, response: str) -> tuple[bool, str]:
-    """Check if response is relevant to the input — catches hallucinations."""
+    if not USE_LLM_GUARD or relevance_scanner is None:
+        logger.debug("Relevance scanner disabled — skipping")
+        return False, response
     try:
         sanitized, is_valid, risk_score = relevance_scanner.scan(prompt, response)
         if not is_valid:
-            logger.warning(
-                "Low relevance detected in output  risk_score: %.2f", risk_score
-            )
+            logger.warning("Low relevance detected  risk_score: %.2f", risk_score)
             return (
                 True,
-                "I apologise, I was unable to generate a relevant response. Please try rephrasing your question or contact our support team directly.",
+                "I apologise, I was unable to generate a relevant response. Please try rephrasing your question.",
             )
         return False, response
     except Exception as e:
@@ -43,16 +58,16 @@ def check_relevance(prompt: str, response: str) -> tuple[bool, str]:
 
 
 def check_no_refusal(prompt: str, response: str) -> tuple[bool, str]:
-    """Check the response is not an unexplained refusal."""
+    if not USE_LLM_GUARD or no_refusal_scanner is None:
+        logger.debug("No-refusal scanner disabled — skipping")
+        return False, response
     try:
         sanitized, is_valid, risk_score = no_refusal_scanner.scan(prompt, response)
         if not is_valid:
-            logger.warning(
-                "Unexpected refusal detected in output  risk_score: %.2f", risk_score
-            )
+            logger.warning("Unexpected refusal detected  risk_score: %.2f", risk_score)
             return (
                 True,
-                "I apologise, I was unable to process your request. Please contact our support team directly for assistance.",
+                "I apologise, I was unable to process your request. Please contact our support team directly.",
             )
         return False, response
     except Exception as e:
@@ -61,46 +76,29 @@ def check_no_refusal(prompt: str, response: str) -> tuple[bool, str]:
 
 
 def check_sanity(response: str) -> tuple[bool, str]:
-    """Basic sanity checks — empty, too short, or gibberish."""
     if not response or not response.strip():
         logger.warning("Empty response detected")
-        return (
-            True,
-            "I apologise, something went wrong. Please try again or contact our support team.",
-        )
-
+        return True, "I apologise, something went wrong. Please try again."
     if len(response.strip()) < 10:
-        logger.warning(
-            "Suspiciously short response detected  length: %d", len(response.strip())
-        )
-        return (
-            True,
-            "I apologise, something went wrong. Please try again or contact our support team.",
-        )
-
+        logger.warning("Suspiciously short response  length: %d", len(response.strip()))
+        return True, "I apologise, something went wrong. Please try again."
     return False, response
 
 
 def run_output_checks(prompt: str, response: str) -> str:
     """Run all output checks. Returns the final safe response."""
-
-    # Sanity check first — no point running others on empty response
     flagged, response = check_sanity(response)
     if flagged:
         return response
 
-    # PII redaction — modifies response in place if PII found
     flagged, response = check_pii_in_output(prompt, response)
     if flagged:
         logger.info("Response sanitized after PII detection")
-        # Don't return fallback — use sanitized version with PII replaced
 
-    # Relevance check
     flagged, response = check_relevance(prompt, response)
     if flagged:
         return response
 
-    # Refusal check
     flagged, response = check_no_refusal(prompt, response)
     if flagged:
         return response
