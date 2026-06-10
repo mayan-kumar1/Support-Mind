@@ -48,3 +48,5 @@ async def run(user_input: str, user_id: str = "default_user"):
 
 if __name__ == "__main__":
     asyncio.run(run("What is your return policy?", user_id="user_001"))
+    asyncio.run(run("This is riduculous, connect me to a human?", user_id="user_001"))
+    asyncio.run(run("Good Morning!", user_id="user_001"))
