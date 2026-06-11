@@ -1,11 +1,14 @@
 import sys
 import os
+from contextlib import asynccontextmanager
+import asyncio
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +20,26 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 # ── Lazy graph loader ──────────────────────────────────────────────────────────
+
+
+async def warmup():
+    """Load all models in background after server starts."""
+    try:
+        logger.info("Background warmup starting...")
+        await asyncio.sleep(2)  # let server fully start first
+        get_agent_graph()  # loads graph + all models
+        logger.info("Background warmup complete — server ready")
+    except Exception as e:
+        logger.error("Warmup failed  error: %s", str(e))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    asyncio.create_task(warmup())  # runs in background — doesn't block port binding
+    yield
+    logger.info("Shutting down")
+
+
 _agent_graph = None
 
 
@@ -34,6 +57,7 @@ app = FastAPI(
     title="SupportMind API",
     description="AI Customer Support Agent API",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
