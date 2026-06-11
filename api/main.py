@@ -37,12 +37,13 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Shutting down")
 
+# Remove the lifespan context manager completely
+# And update app definition to just:
 
 app = FastAPI(
     title="SupportMind API",
     description="AI Customer Support Agent API",
-    version="1.0.0",
-    lifespan=lifespan,
+    version="1.0.0"
 )
 
 app.add_middleware(
