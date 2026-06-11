@@ -13,10 +13,10 @@ from pydantic import BaseModel
 from langchain_core.messages import HumanMessage
 from langgraph.types import Command
 from logger import get_logger
-from contextlib import asynccontextmanager
 
 logger = get_logger(__name__)
 
+# ── Lazy graph loader ──────────────────────────────────────────────────────────
 _agent_graph = None
 
 
@@ -29,21 +29,11 @@ def get_agent_graph():
     return _agent_graph
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Port bound — loading models...")
-    get_agent_graph()  # triggers full graph + model loading
-    logger.info("All models loaded — service ready")
-    yield
-    logger.info("Shutting down")
-
-# Remove the lifespan context manager completely
-# And update app definition to just:
-
+# ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="SupportMind API",
     description="AI Customer Support Agent API",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 app.add_middleware(
@@ -115,7 +105,7 @@ async def chat(request: ChatRequest):
     }
 
     try:
-        result = await agent_graph.ainvoke(initial_state, config=config)  # type: ignore
+        result = await get_agent_graph().ainvoke(initial_state, config=config)  # type: ignore
         return await _build_response(result, config)
 
     except Exception as e:
@@ -132,7 +122,7 @@ async def resume(request: ResumeRequest):
 
     try:
         if isinstance(request.resume_value, str):
-            result = await get_agent_graph.ainvoke(
+            result = await get_agent_graph().ainvoke(
                 Command(
                     resume=request.resume_value,
                     update={"messages": [HumanMessage(content=request.resume_value)]},
@@ -140,8 +130,9 @@ async def resume(request: ResumeRequest):
                 config=config,  # type: ignore
             )
         else:
-            result = await get_agent_graph.ainvoke(
-                Command(resume=request.resume_value), config=config  # type: ignore
+            result = await get_agent_graph().ainvoke(
+                Command(resume=request.resume_value),
+                config=config,  # type: ignore
             )
 
         return await _build_response(result, config)
@@ -153,7 +144,7 @@ async def resume(request: ResumeRequest):
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
 async def _build_response(result: dict, config: dict) -> ChatResponse:
-    graph_state = await get_agent_graph.aget_state(config)  # type: ignore
+    graph_state = await get_agent_graph().aget_state(config)  # type: ignore
 
     if graph_state.next and graph_state.tasks:
         tasks = graph_state.tasks
