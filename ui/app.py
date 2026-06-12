@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 import streamlit as st
 import httpx
@@ -13,11 +13,15 @@ from logger import get_logger
 
 logger = get_logger(__name__)
 
-# Read from Streamlit secrets in production, env var in development
-try:
-    API_BASE_URL = st.secrets["API_BASE_URL"]
-except Exception:
-    API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+# Read API URL — env var takes priority over Streamlit secrets
+API_BASE_URL = os.getenv("API_BASE_URL")
+if not API_BASE_URL:
+    try:
+        API_BASE_URL = st.secrets["API_BASE_URL"]
+    except Exception:
+        API_BASE_URL = "http://localhost:8000"
+
+logger.info("API_BASE_URL: %s", API_BASE_URL)
 
 HITL_ESCALATION_RESPONSE = "I'm connecting you with one of our human agents who will be able to assist you further. Please hold on."
 
@@ -42,13 +46,10 @@ with st.sidebar:
             "interrupted",
             "hitl_pending",
             "hitl_package",
-            "hitl_config",
             "escalated",
         ]:
             st.session_state[key] = (
-                []
-                if key == "messages"
-                else None if "package" in key or "config" in key else False
+                [] if key == "messages" else None if "package" in key else False
             )
         st.rerun()
 
@@ -67,18 +68,20 @@ for key, default in defaults.items():
 
 # ── API helpers ────────────────────────────────────────────────────────────────
 def call_chat(message: str, user_id: str) -> dict:
+    url = f"{API_BASE_URL}/chat"
+    logger.info("Calling chat API  url: %s", url)
     with httpx.Client(timeout=120.0) as client:
-        resp = client.post(
-            f"{API_BASE_URL}/chat", json={"message": message, "user_id": user_id}
-        )
+        resp = client.post(url, json={"message": message, "user_id": user_id})
         resp.raise_for_status()
         return resp.json()
 
 
 def call_resume(user_id: str, resume_value) -> dict:
+    url = f"{API_BASE_URL}/resume"
+    logger.info("Calling resume API  url: %s", url)
     with httpx.Client(timeout=120.0) as client:
         resp = client.post(
-            f"{API_BASE_URL}/resume",
+            url,
             json={"user_id": user_id, "resume_value": resume_value},
         )
         resp.raise_for_status()
@@ -86,18 +89,14 @@ def call_resume(user_id: str, resume_value) -> dict:
 
 
 def handle_api_response(data: dict, response: str) -> str:
-    """Process API response and update session state flags."""
-
     if data.get("escalated"):
         st.session_state.escalated = True
 
     if data.get("interrupted"):
         interrupt_type = data.get("interrupt_type", "")
-
         if interrupt_type == "clarification":
             st.session_state.interrupted = True
             return data.get("response", "")
-
         elif interrupt_type == "hitl":
             st.session_state.hitl_pending = True
             st.session_state.hitl_package = data.get("hitl_package", {})
@@ -166,14 +165,19 @@ with chat_col:
                         )
 
                 except httpx.TimeoutException:
-                    response = "Request timed out. The agent is taking too long. Please try again."
+                    response = "Request timed out. The agent is warming up, please try again in a few seconds."
                     st.markdown(response)
                     logger.error("API timeout  user_id: %s", user_id)
 
                 except httpx.HTTPStatusError as e:
                     response = f"API error: {e.response.status_code}. Please try again."
                     st.markdown(response)
-                    logger.error("API HTTP error  status: %s", e.response.status_code)
+                    logger.error(
+                        "API HTTP error  status: %s  url: %s  body: %s",
+                        e.response.status_code,
+                        e.request.url,
+                        e.response.text,
+                    )
 
                 except Exception as e:
                     response = "Something went wrong. Please try again."
