@@ -1,0 +1,9 @@
+.venv
+.env
+__pycache__
+*.pyc
+*.pyo
+logs/
+memory/
+.git
+agent_graph.png

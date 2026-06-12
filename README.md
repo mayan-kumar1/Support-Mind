@@ -1,3 +1,12 @@
+---
+title: SupportMind
+emoji: 🛍️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
+
 # SupportMind — AI Customer Support Agent
 
 > A production-grade AI customer support agent built with LangGraph, featuring guardrails, human-in-the-loop review, LLM-as-a-judge evaluation, and semantic caching — deployed on Streamlit Cloud with a FastAPI backend.
