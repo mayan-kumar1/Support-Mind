@@ -15,7 +15,6 @@ dependencies = [
     "langgraph-checkpoint-sqlite>=3.1.0",
     "llm-guard>=0.3.16",
     "pinecone>=9.1.0",
-    "pinecone-client>=6.0.0",
     "python-dotenv>=1.2.2",
     "sentence-transformers>=5.5.1",
     "streamlit>=1.58.0",
