@@ -99,6 +99,11 @@ async def health():
     return {"status": "ok", "service": "SupportMind API"}
 
 
+@app.head("/health")
+async def health_head():
+    return {"status": "ok", "service": "SupportMind API"}
+
+
 # ── Chat endpoint ──────────────────────────────────────────────────────────────
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
